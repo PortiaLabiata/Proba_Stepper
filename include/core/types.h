@@ -18,9 +18,6 @@
 
 #define INDEX_INP_ERRC  0
 
-#define STP_DIR_CLOCK   CLOCKWISE
-#define STP_DIR_CCLOCK  COUNTERCLOCKWISE
-
 /* Forward declarations */
 
 typedef struct UART_Handle UART_Handle_t;
@@ -40,11 +37,6 @@ typedef struct {
 typedef struct MB_Proxy MB_Proxy_t;
 
 typedef enum {
-    STEPPER_OK,
-    STEPPER_ERROR_SOFT
-} Stepper_Status_t;
-
-typedef enum {
     UART_OK,
     UART_ERROR_SOFT
 } UART_Status_t;
@@ -62,12 +54,6 @@ typedef enum {
     CMD_HALT,
     CMD_INVALID
 } Command_t;
-
-typedef enum {
-    STEPPER_MODE_FULLSTEP_1PHASE,
-    STEPPER_MODE_FULLSTEP_2PHASE,
-    STEPPER_MODE_HALFSTEP
-} Stepper_Mode_t;
 
 /* System context */
 

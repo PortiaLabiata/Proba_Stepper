@@ -1,199 +1,135 @@
 #include "driver/stepper.h"
+#include "core/system.h"
+#include "core/types.h"
+#include "core/prefs.h"
 
 /* Typedefs */
 
-/**
- * \todo Microoptimization: switch from array to single variables. It will make time
- * of reading a value just a little bit shorter.
- */
 struct Stepper_Handle {
-    const uint32_t *gpios;
-    const uint8_t *config;
-    TIM_TypeDef *instance;
-    volatile uint8_t config_idx;
-    uint8_t direc;
-    volatile uint32_t steps_left;
-    uint8_t mode;
-
-    const uint8_t *config_1ph;
-    const uint8_t *config_2ph;
-    const uint8_t *config_half;
+    GPIO_TypeDef *en_port;
+    uint32_t en_msk;
+    GPIO_TypeDef *dir_port;
+    uint32_t dir_msk;
+    GPIO_TypeDef *ms1_port;
+    uint32_t ms1_msk;
+    uint32_t steps_left;
+    uint8_t enabled;
 };
 
-/* Handle pool */
+/* Global variables */
 
-static Stepper_Handle_t _stepper_pool[MAX_STEPPERS];
-static uint8_t _n_steppers;
+static Stepper_Handle_t _stepper_pool[STP_POOL_SIZE];
+static uint8_t _stepper_idx = 0;
 
-/* Functions */
+/* Constructor/destructor */
 
-/**
- * \brief Initializes stepper object from the global pool.
- * \param[in] gpios Array of GPIO pins used for stepper.
- * \param[in] configs Array of sequential configurations of stepper GPIO pins.
- * \returns Pointer to a stepper object. Unsafe, btw.
- */
-Stepper_Handle_t *Stepper_Init(TIM_TypeDef *inst, const uint32_t *gpios, const uint8_t *config_1ph, const uint8_t *config_2ph, \
-    const uint8_t *config_half) {
-    if (_n_steppers >= MAX_STEPPERS) return NULL;
-    
-    Stepper_Handle_t *stp = &_stepper_pool[_n_steppers++];
-    stp->gpios = gpios;
-    stp->config = config_1ph;
-    stp->instance = inst;
-
-    stp->config_1ph = config_1ph;
-    stp->config_2ph = config_2ph;
-    stp->config_half = config_half;
-
-    stp->config_idx = 0;
-    stp->mode = STEPPER_MODE_FULLSTEP_1PHASE;
-
-    GPIOB->ODR &= ~(gpios[0] | gpios[1] | gpios[2] | gpios[3]);
-    return stp;
+Stepper_Handle_t *Stepper_Create(void) {
+    if (_stepper_idx >= STP_POOL_SIZE) {
+        return NULL;
+    }
+    return &_stepper_pool[_stepper_idx++];
 }
 
-/**
- * \brief Sets the stepper mode, either full step 1 phase, full step 2 phase of half step.
- * \param[in] stp Stepper handle.
- * \param[in] mode Stepper mode, either STEPPER_MODE_FULLSTEP_1PHASE, STEPPER_MODE_FULLSTEP_2PHASE,
- * or STEPPER_MODE_HALFSTEP.
- * \returns Operation status.
- */
-Stepper_Status_t Stepper_SetMode(Stepper_Handle_t *stp, Stepper_Mode_t mode) {
+/* Control functions */
+
+Stepper_Error_t Stepper_Init(Stepper_Handle_t *handle, GPIO_TypeDef *en_port, GPIO_TypeDef *dir_port,\
+    GPIO_TypeDef *ms1_port, uint32_t en_msk, uint32_t dir_msk, uint32_t ms1_msk) {
+    if (handle == NULL) {
+        return STP_ERR_NULLPTR;
+    }
+    handle->dir_port = dir_port;
+    handle->dir_msk = dir_msk;
+
+    handle->en_port = en_port;
+    handle->en_msk = en_msk;
+
+    handle->ms1_port = ms1_port;
+    handle->ms1_msk = ms1_msk;
+    return STP_OK;
+}
+
+void Stepper_Enable(void) {
+    // PWM mode 2
+    STP_TIM_INSTANCE->CCMR1 |= (TIM_CCMR1_OC1M_0 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2);
+    STP_TIM_INSTANCE->CCER |= TIM_CCER_CC1E;
+    STP_TIM_INSTANCE->PSC = SystemCoreClock / 1000 - 1; // One timer tick = 1 ms
+    STP_TIM_INSTANCE->ARR = 10 - 1;
+    STP_TIM_INSTANCE->CCR1 = 5;
+
+    STP_TIM_INSTANCE->DIER |= TIM_DIER_UIE;
+    STP_TIM_INSTANCE->CR1 &= ~(TIM_CR1_CKD_Msk);
+    STP_TIM_INSTANCE->EGR |= TIM_EGR_UG;
+    STP_TIM_INSTANCE->CR1 |= TIM_CR1_CEN;
+}
+
+Stepper_Error_t Stepper_SetPeriod(uint16_t period_ms) {
+    if (period_ms < 7 || period_ms > 50) {
+        return STP_ERR_ILLVAL;
+    }
+    STP_TIM_INSTANCE->CCR1 = period_ms;
+    return STP_OK;
+}
+
+void Stepper_SetSteps(Stepper_Handle_t *handle, uint16_t steps) {
+    handle->steps_left = steps;
+}
+
+Stepper_Error_t Stepper_SetMode(Stepper_Handle_t *handle, Stepper_Mode_t mode) {
     switch (mode) {
-        case STEPPER_MODE_FULLSTEP_1PHASE:
-            STEPPER_LEAVE_ON_NULL(stp->config_1ph);
-            stp->config = stp->config_1ph;
+        case STP_MODE_1:
+            STP_SETMODE_1(handle);
             break;
-        case STEPPER_MODE_FULLSTEP_2PHASE:
-            STEPPER_LEAVE_ON_NULL(stp->config_2ph);
-            stp->config = stp->config_2ph;
-            break;
-        case STEPPER_MODE_HALFSTEP:
-            STEPPER_LEAVE_ON_NULL(stp->config_half);
-            stp->config = stp->config_half;
+        case STP_MODE_2:
+            STP_SETMODE_2(handle);
             break;
         default:
-            return STEPPER_ERROR_SOFT;
+            return STP_ERR_ILLVAL;
     }
-    stp->mode = mode;
-    return STEPPER_OK;
+    return STP_OK;
 }
 
-/**
- * \brief Preforms a single step.
- * \param[in] stp Stepper handle.
- * \param[in] dir Direction, can be either CLOCKWISE or COUNTERCLOCKWISE.
- * \returns Operation status.
- */
-Stepper_Status_t Stepper_Step(Stepper_Handle_t *stp, uint8_t dir) {
-    uint8_t curr_config = stp->config[stp->config_idx];
-    GPIOB->ODR &= ~(stp->gpios[0] | stp->gpios[1] | stp->gpios[2] | stp->gpios[3]);
-    int n_entries = sizeof(stp->config) / sizeof(char);
+/* Rotation */
 
-    if (curr_config & 0b0001) GPIOB->ODR |= stp->gpios[3];
-    if (curr_config & 0b0010) GPIOB->ODR |= stp->gpios[2];
-    if (curr_config & 0b0100) GPIOB->ODR |= stp->gpios[1];
-    if (curr_config & 0b1000) GPIOB->ODR |= stp->gpios[0];
-
-    if (dir == CLOCKWISE) {
-        stp->config_idx = (stp->config_idx + 1) % n_entries;
-    } else if (dir == COUNTERCLOCKWISE) {
-        stp->config_idx = (stp->config_idx - 1 + n_entries) % n_entries;
-    } else {
-        return STEPPER_ERROR_SOFT; // In case something went horribly wrong.
-    }
-    return STEPPER_OK;
+uint8_t Stepper_IsEnabled(Stepper_Handle_t *handle) {
+    return handle->enabled;
 }
 
-/**
- * \brief Halts a stepper motor and either leaves it energized 
- * (huge current consumption!) or not.
- * \param[in] stp Stepper handle.
- * \param[in] hold Leave the coils energized or not, either SET or RESET.
- * \returns Operation status.
- */
-Stepper_Status_t Stepper_Halt(Stepper_Handle_t *stp, uint8_t hold) {
-    if (!hold) {
-        GPIOB->ODR &= ~(stp->gpios[0] | stp->gpios[1] | stp->gpios[2] | stp->gpios[3]);
-        return STEPPER_OK;
-    } else {
-        return STEPPER_OK;
-    }
-}
-
-
-/**
- * \brief Performs a blocking stepper revolution. Currently only full step mode supported.
- * Minimum delay is 10 ms, technically there is no maximum delay, but at 100 ms the
- * current cunsomption increases to 300 mA, so I would say a max of 50-70 ms is recommended.
- * \param[in] stp Stepper handle.
- * \param[in] steps Number of steps performed.
- * \param[in] dir Direction, can be either CLOCKWISE or COUNTERCLOCKWISE.
- * \param[in] del Delay between steps.
- * \returns Operation status.
- * \todo Add error handling.
- */
-Stepper_Status_t Stepper_Rotate(Stepper_Handle_t *stp, uint32_t steps, uint8_t dir, uint32_t del) {
-    for (int i = 0; i < steps; i++) {
-        Stepper_Step(stp, dir);
-        delay(del);
+Stepper_Error_t Stepper_Rotate_IT(Stepper_Handle_t *handle, uint16_t steps, \
+     Stepper_Dir_t direc) {
+    if (handle == NULL) {
+        return STP_ERR_NULLPTR;
     }
 
-    return STEPPER_OK;
+    switch (direc) {
+        case STP_DIR_CLOCK:
+            STP_SETDIR_CLOCK(handle);
+            break;
+        case STP_DIR_COUNTER:
+            STP_SETDIR_COUNTER(handle);
+            break;
+        default:
+            return STP_ERR_ILLVAL;
+    }
+    Stepper_SetSteps(handle, steps);
+    STP_ENABLE(handle);
+    return STP_OK;
 }
 
-/**
- * \brief Performs a non-blocking stepper revolution. Currently only full step mode supported.
- * Minimum delay is 10 ms, technically there is no maximum delay, but at 100 ms the
- * current cunsomption increases to 300 mA, so I would say a max of 50-70 ms is recommended.
- * \param[in] stp Stepper handle.
- * \param[in] steps Number of steps performed.
- * \param[in] dir Direction, can be either CLOCKWISE or COUNTERCLOCKWISE.
- * \param[in] del Delay between steps.
- * \returns Operation status.
- * \todo Add error handling.
- */
-Stepper_Status_t Stepper_Rotate_IT(Stepper_Handle_t *stp, uint32_t steps, uint8_t dir, uint32_t del) {
-    stp->steps_left = steps;
-    stp->direc = dir;
-
-    stp->instance->PSC = PCLK1_FREQ / 1000 - 1;
-    stp->instance->ARR = del - 1;
-    stp->instance->EGR |= TIM_EGR_UG;
-    stp->instance->CR1 |= TIM_CR1_CEN;
-    return STEPPER_OK;
-}
-
-/**
- * \brief Halts stepper in non-blocking mode analogous to blocking case.
- * \param[in] stp Stepper handle.
- * \param[out] hold Leave the coild energized or not, either SET or RESET.
- * \returns Operation status.
- */
-Stepper_Status_t Stepper_Halt_IT(Stepper_Handle_t *stp, uint8_t hold) {
-    stp->steps_left = 0;
-    return Stepper_Halt(stp, hold);
+Stepper_Error_t Stepper_Halt_IT(Stepper_Handle_t *handle) {
+    if (handle == NULL) {
+        return STP_ERR_NULLPTR;
+    }
+    Stepper_SetSteps(handle, 0);
+    STP_DISABLE(handle);
+    return STP_OK;
 }
 
 /* Callbacks */
 
-/**
- * \brief Callback for timer UEV, steps the stepper from the system context.
- * \param[in] ctx System context.
- * \returns Operation status, either SET or RESET. The IRS will decide if it's time to
- * stop the timer by the return value, so low-level and driver-level modules are separated.
- */
-uint8_t TIM_UEV_Callback(System_Context_t *ctx) {
-    Stepper_Handle_t *handle = ctx->stepper_handle;
-    if (handle->steps_left > 0) {
-        Stepper_Step(handle, handle->direc);
-        handle->steps_left--;
-        return SET;
-    } else {
-        Stepper_Halt(handle, RESET);
-        return RESET;
+void Stepper_TIMCallback(void) {
+    for (Stepper_Handle_t *handle = _stepper_pool; handle - _stepper_pool < _stepper_idx; handle++) {
+        if (--handle->steps_left <= 0 && Stepper_IsEnabled(handle)) {
+            STP_DISABLE(handle);
+        }
     }
 }
-

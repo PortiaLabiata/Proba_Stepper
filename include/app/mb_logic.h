@@ -2,6 +2,7 @@
 #include "core/system.h"
 #include "core/prefs.h"
 #include "core/types.h"
+#include "driver/stepper.h"
 
 #include "mb.h"
 #include "port.h"

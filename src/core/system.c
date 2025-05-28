@@ -143,12 +143,12 @@ void GPIO_Config(void) {
     GPIOC->CRH |= (GPIO_MODE_OUTPUT << GPIO_CRH_MODE13_Pos); // Set mode to 2MHz
     GPIOC->CRH &= ~(GPIO_OUTPUT_PP << GPIO_CRH_CNF13_Pos); // Set mode to output PP
 
-    RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;
+    RCC->APB2ENR |= (RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPAEN);
 
-    GPIOB->CRL &= ~(GPIO_CRL_CNF6_Msk | GPIO_CRL_CNF7_Msk);
+    GPIOA->CRL &= ~(GPIO_CRL_CNF1_Msk | GPIO_CRL_CNF2_Msk | GPIO_CRL_CNF3_Msk);
     GPIOB->CRH &= ~(GPIO_CRH_CNF8_Msk | GPIO_CRH_CNF9_Msk);
 
-    GPIOB->CRL |= (GPIO_CRL_MODE6_1 | GPIO_CRL_MODE7_1);
+    GPIOA->CRL |= (GPIO_CRL_MODE1_1 | GPIO_CRL_MODE2_1 | GPIO_CRL_MODE3_1);
     GPIOB->CRH |= (GPIO_CRH_MODE8_1 | GPIO_CRH_MODE9_1);
 }
 
@@ -181,6 +181,10 @@ void UART_Config(void) {
  * \brief Low-level configuration of TIM2.
  */
 void TIM2_Config(void) {
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;
+    GPIOA->CRL &= ~GPIO_CRL_CNF0;
+    GPIOA->CRL |= (GPIO_CRL_CNF0_1 | GPIO_CRL_MODE0_1);
+
     RCC->APB1ENR |= RCC_APB1ENR_TIM2EN; // Enable clocking
     TIM2->DIER |= TIM_DIER_UIE; // Enable update event interrupt
     TIM2->CR1 &= ~(TIM_CR1_CKD_Msk);

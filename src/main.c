@@ -40,7 +40,9 @@ int main(void) {
 
     IWDG_Config();
 
-    Stepper_Handle_t *stp = Stepper_Init(TIM2, gpios, wave, NULL, NULL);
+    Stepper_Handle_t *stp = Stepper_Create();
+    Stepper_Init(stp, GPIOA, GPIOA, GPIOA, GPIO_ODR_ODR1, GPIO_ODR_ODR2, GPIO_ODR_ODR3);
+    Stepper_Enable();
     UART_Handle_t *hnd = UART_Init(USART1);
     MB_Proxy_t *proxy = MB_Proxy_Init();
     Context_Init(&ctx, hnd, stp);
@@ -48,8 +50,8 @@ int main(void) {
     eMBErrorCode eStatus; // For later
     eStatus = eMBInit(MB_RTU, 1, 0, MB_BAUD_RATE, MB_PAR_EVEN);
     eStatus = eMBEnable();
-    
-    Stepper_SetMode(ctx.stepper_handle, STEPPER_MODE_FULLSTEP_1PHASE);
+
+    //Stepper_SetMode(ctx.stepper_handle, STEPPER_MODE_FULLSTEP_1PHASE);
 
     while (1) {
         (void)eMBPoll();
@@ -78,13 +80,13 @@ static System_Status_t eSystemPoll(MB_Proxy_t *proxy) {
                 break;
             }
 
-            Stepper_SetMode(ctx.stepper_handle, MB_Proxy_AccessMode(proxy));
+            //Stepper_SetMode(ctx.stepper_handle, MB_Proxy_AccessMode(proxy));
             Stepper_Rotate_IT(ctx.stepper_handle, MB_Proxy_AccessSteps(proxy), \
-                MB_Proxy_AccessDir(proxy), MB_Proxy_AccessSpeed(proxy));
+                MB_Proxy_AccessDir(proxy));
             break;
 
         case CMD_HALT:
-            Stepper_Halt_IT(ctx.stepper_handle, RESET);
+            Stepper_Halt_IT(ctx.stepper_handle);
             break;
         
         case CMD_INVALID:

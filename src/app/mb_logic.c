@@ -11,6 +11,13 @@ struct MB_Proxy {
     System_Status_t err;
 };
 
+struct Holding {
+    uint16_t cmd;
+    uint16_t steps;
+    uint16_t mode;
+    uint16_t del;
+};
+
 /* Registers */
 
 static USHORT usRegInputBuf[REG_INPUT_NREGS];
