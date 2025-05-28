@@ -18,7 +18,7 @@ void USART1_IRQHandler(void) {
         UART_RecieveCallback(&ctx); // Legacy, remove context
     }
     if (USART1->SR & USART_SR_TXE_Msk) {
-        UART_TransmitCallback(ctx.uart_handle);
+        //UART_TransmitCallback(ctx.uart_handle);
     }
 }
 
